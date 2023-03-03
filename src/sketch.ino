@@ -1,18 +1,18 @@
 /**
  * @file    sketch.ino
- * @brief   ECG Gating System - R-Peak Detection Exploration (Phase 2)
+ * @brief   ECG Gating System - R-Peak Detection Simplified (Phase 3)
  *
- * Expanded exploration adding R-peak (QRS complex) detection algorithm.
- * Implements absolute maximum value tracking with adaptive threshold calculation.
- * Also refines T-wave threshold parameters based on empirical testing.
- * Adds R-R interval tracking for heart rate estimation.
+ * Simplification of R-peak detection algorithm, reducing threshold percentage
+ * from 75% to 60% for more sensitive peak detection. Removes complex R-R interval
+ * tracking to streamline algorithm. Focuses on robust R-peak detection without
+ * additional statistics collection.
  *
  * @note    Arduino hardware: ADC input range 0-1023 bits maps to 0-5V physical input.
  *          ECG signal conditioning circuit scales cardiac signal to 0.61V-4.47V range.
  *          Digital output on Pin 11 fires when R-peak detected (after adaptation).
  *
  * @author  Arturo Vargas Cuevas (A01652564)
- * @date    2023-03-02
+ * @date    2023-03-03
  */
 
 /* ============================================================================
@@ -98,22 +98,10 @@ float average_value = 0.0;
 int r_max = 0;
 
 /* R-peak threshold as percentage of absolute maximum (tunable) */
-const float r_peak_percentage = 0.75;
+const float r_peak_percentage = 0.6;
 
 /* Computed R-peak threshold value for firing */
 int r_threshold = 0;
-
-/* R-R interval time counter (samples between consecutive R-peaks) */
-int r_peak_time = 0;
-
-/* R-R interval circular buffer size (for heart rate averaging) */
-const int rr_interval_buffer_size = 10;
-
-/* Circular buffer storing R-R interval lengths (in samples) */
-int rr_intervals[rr_interval_buffer_size];
-
-/* Current write index into rr_intervals buffer */
-int rr_interval_count = 0;
 
 /* ============================================================================
 * T-Wave Detection Threshold Variables
@@ -194,7 +182,6 @@ void loop()
         }
     }
 
-    Serial.println("RR Count: " + String(rr_interval_count));
     Serial.println("ECG Sample: " + String(ecg_sample));
     Serial.println("R Threshold: " + String(r_threshold));
 }
