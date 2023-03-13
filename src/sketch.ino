@@ -1,18 +1,18 @@
 /**
  * @file    sketch.ino
- * @brief   ECG Gating System - R-Peak and T-Wave Detection with Empiric Thresholds
+ * @brief   ECG Gating System - P+R+T Peak Detection with Dynamic Timing Windows
  *
- * Extends R-peak detection with T-wave (repolarization) peak detection. Implements
- * adaptive R-peak threshold using signal maximum during adaptation phase (30000 samples).
- * T-wave detection uses empiric voltage thresholds (1.8V-2.56V) converted to ADC bits.
- * Detects local peaks within T-wave window using max tracking algorithm.
+ * Implements state machine-based detection of P-waves, R-peaks, and T-waves. Uses adaptive
+ * R-peak threshold (60% of signal maximum), empiric P-wave voltage thresholds (0.5V-1.3V),
+ * and T-wave thresholds (1.8V-2.56V). Detection windows dynamically adjust based on cardiac
+ * timing. Outputs LOW on R-peak detection, HIGH on T-wave peak detection.
  *
  * @note    Arduino hardware: ADC input range 0-1023 bits maps to 0-5V physical input.
  *          ECG signal conditioning circuit constrains output to 0.61V-4.47V range.
- *          Digital output on Pin 11 fires when T-wave peak detected.
+ *          Digital output on Pin 11: LOW on R-peak, HIGH on T-peak.
  *
  * @author  Arturo Vargas Cuevas (A01652564)
- * @date    2023-03-09
+ * @date    2023-03-13
  */
 
 /* ============================================================================
@@ -91,6 +91,9 @@ const float r_peak_percentage = 0.6;
 /* Computed R-peak threshold value for firing */
 int r_threshold = 0;
 
+/* R-peak detected state flag */
+boolean r_peak_flag = false;
+
 /* ============================================================================
  * T-Wave Detection Threshold Variables
  * ============================================================================
@@ -108,8 +111,43 @@ int t_threshold_min_bit;
 /* T-wave upper threshold converted to ADC bits (0-1023) */
 int t_threshold_max_bit;
 
+/* Dynamic T-wave window minimum (samples from R-peak) */
+int t_window_min = 200;
+
+/* Dynamic T-wave window maximum (samples from R-peak) */
+int t_window_max = 1000;
+
 /* Maximum T-wave value tracker during detection window */
 int max_t_value = 0;
+
+/* ============================================================================
+ * P-Wave Detection Threshold Variables
+ * ============================================================================
+ */
+
+/* P-wave lower voltage threshold (V) - empiric value */
+const float p_threshold_min_voltage = 0.5;
+
+/* P-wave upper voltage threshold (V) - empiric value */
+const float p_threshold_max_voltage = 1.3;
+
+/* P-wave lower threshold converted to ADC bits (0-1023) */
+int p_threshold_min_bit;
+
+/* P-wave upper threshold converted to ADC bits (0-1023) */
+int p_threshold_max_bit;
+
+/* Dynamic P-wave window minimum before R-peak (samples) */
+int p_window_min = 50;
+
+/* Dynamic P-wave window maximum before R-peak (samples) */
+int p_window_max = 300;
+
+/* Maximum P-wave value tracker during detection window */
+int max_p_value = 0;
+
+/* P-wave detected state flag */
+boolean p_peak_flag = false;
 
 
 void setup()
@@ -129,6 +167,13 @@ void setup()
      */
     t_threshold_min_bit = round(t_threshold_min_voltage / (adc_voltage_range / 1023.0));
     t_threshold_max_bit = round(t_threshold_max_voltage / (adc_voltage_range / 1023.0));
+
+    /* Convert P-wave voltage thresholds to ADC bit domain.
+     * Scaling formula: bit_value = (voltage_threshold / adc_range) * 1023
+     * ADC has 10-bit resolution (0-1023 discrete levels).
+     */
+    p_threshold_min_bit = round(p_threshold_min_voltage / (adc_voltage_range / 1023.0));
+    p_threshold_max_bit = round(p_threshold_max_voltage / (adc_voltage_range / 1023.0));
 }
 
 
@@ -153,27 +198,46 @@ void loop()
         r_threshold = round(r_max * r_peak_percentage);
     }
 
-    /* After adaptation phase, detect R and T peaks */
+    /* After adaptation phase, detect P, R and T peaks */
     if (is_adaptation_complete) {
+        /* Find P-wave peak (local maximum in lower voltage range before R-peak) */
+        if (adc_sample_counter > p_window_min && adc_sample_counter < p_window_max && r_peak_flag == false) {
+            if (ecg_sample > p_threshold_min_bit && ecg_sample < p_threshold_max_bit) {
+                if (max_p_value < ecg_sample) {
+                    max_p_value = ecg_sample;
+                } else {
+                    p_peak_flag = true;
+                    max_p_value = 0;
+                }
+            } else {
+                /* No action */
+            }
+        }
+
         /* Find R-peak (absolute maximum crossing threshold) */
-        if (ecg_sample > r_threshold) {
-            digitalWrite(output_pin, HIGH);
-            adc_sample_counter = 0;
-        } else {
+        if (ecg_sample > r_threshold && r_peak_flag == false) {
             digitalWrite(output_pin, LOW);
+            r_peak_flag = true;
+            adc_sample_counter = 0;
+            t_window_min = 200;
+            t_window_max = 1000;
+            p_peak_flag = false;
+        } else {
+            /* No action */
         }
 
         /* Find T-wave peak (local maximum in empiric voltage range) */
-        if (adc_sample_counter > 500 && adc_sample_counter < 1000) {
+        if (adc_sample_counter > t_window_min && adc_sample_counter < t_window_max) {
             if (ecg_sample > t_threshold_min_bit && ecg_sample < t_threshold_max_bit) {
                 if (max_t_value < ecg_sample) {
                     max_t_value = ecg_sample;
                 } else {
                     digitalWrite(output_pin, HIGH);
+                    r_peak_flag = false;
                     max_t_value = 0;
                 }
             } else {
-                digitalWrite(output_pin, LOW);
+                /* No action */
             }
         }
     }
